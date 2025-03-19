@@ -80,7 +80,7 @@ tracing-test = "0.2.5"
 
 [dev-dependencies]
 http-body = "1.0"
-iroh = { version = "0.33", features = ["test-utils"] }
+iroh = { git = "https://github.com/NousResearch/iroh", rev = "8499681c8f8942c187aefa2989a80782a3ce1044", features = ["test-utils"] }
 quinn = { package = "iroh-quinn", version = "0.13", features = ["ring"] }
 futures-buffered = "0.2.4"
 proptest = "1.0.0"
