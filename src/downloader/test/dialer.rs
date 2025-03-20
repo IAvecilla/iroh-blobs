@@ -62,6 +62,10 @@ impl DialerT for TestingDialer {
     fn node_id(&self) -> NodeId {
         self.0.read().node_id
     }
+
+    fn latency(&self, _node_id: NodeId) -> Option<Duration> {
+        None
+    }
 }
 
 impl Stream for TestingDialer {
