@@ -45,7 +45,10 @@ use std::{
 use anyhow::anyhow;
 use futures_lite::{future::BoxedLocal, Stream, StreamExt};
 use hashlink::LinkedHashSet;
-use iroh::{endpoint, Endpoint, NodeAddr, NodeId};
+use iroh::{
+    endpoint::{self},
+    Endpoint, NodeAddr, NodeId,
+};
 use iroh_metrics::inc;
 use tokio::{
     sync::{mpsc, oneshot},
@@ -90,6 +93,8 @@ trait DialerT: Stream<Item = (NodeId, anyhow::Result<Self::Connection>)> + Unpin
     fn is_pending(&self, node: NodeId) -> bool;
     /// Get the node id of our node.
     fn node_id(&self) -> NodeId;
+    // Returns the latency of a given node from the endpoint
+    fn latency(&self, node_id: NodeId) -> Option<Duration>;
 }
 
 /// Signals what should be done with the request when it fails.
@@ -1044,9 +1049,13 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
             return NextStep::OutOfProviders;
         }
 
-        // Track if there is provider node to which we are connected and which is not at its request capacity.
+        // Track if there is a provider node to which we are connected and which is not at its request capacity.
+        struct BestConnected {
+            id: NodeId,
+            active_requests: usize,
+        }
         // If there are more than one, take the one with the least amount of running transfers.
-        let mut best_connected: Option<(NodeId, usize)> = None;
+        let mut best_connected: Vec<BestConnected> = vec![];
         // Track if there is a disconnected provider node to which we can potentially connect.
         let mut next_to_dial = None;
         // Track the number of provider nodes that are currently being dialed.
@@ -1068,9 +1077,28 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
                     {
                         has_exhausted_provider = true;
                     } else {
-                        best_connected = Some(match best_connected.take() {
-                            Some(old) if old.1 <= active_requests => old,
-                            _ => (node, active_requests),
+                        // if there is a node in our best connected list
+                        if let Some(BestConnected {
+                            active_requests: least_active,
+                            ..
+                        }) = best_connected.get(0)
+                        {
+                            // and this new node has more active downloads than the best one
+                            if active_requests > *least_active {
+                                break;
+                            }
+                            // if this new node has *less* active downloads than the best one
+                            if active_requests < *least_active {
+                                // wipe the list so we're the only thing in it
+                                best_connected.clear();
+                            }
+                        }
+
+                        // otherwise, we have either an empty list or we're === the lowest one in the list
+                        // so add ourselves
+                        best_connected.push(BestConnected {
+                            id: node,
+                            active_requests,
                         });
                     }
                 }
@@ -1091,7 +1119,11 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
         let has_dialing = currently_dialing > 0;
 
         // If we have a connected provider node with free slots, use it!
-        if let Some((node, _active_requests)) = best_connected {
+        let lowest_ping = best_connected
+            .into_iter()
+            .map(|BestConnected { id, .. }| (id, self.dialer.latency(id).unwrap_or(Duration::MAX)))
+            .min_by_key(|(_, latency)| *latency);
+        if let Some((node, _latency)) = lowest_ping {
             NextStep::StartTransfer(node)
         }
         // If we have a node which could be dialed: Check capacity and act accordingly.
@@ -1511,6 +1543,13 @@ impl DialerT for Dialer {
 
     fn node_id(&self) -> NodeId {
         self.endpoint().node_id()
+    }
+
+    // Returns the latency of a given node from the endpoint
+    fn latency(&self, node_id: NodeId) -> Option<Duration> {
+        self.endpoint()
+            .remote_info(node_id)
+            .and_then(|info| info.latency)
     }
 }
 
