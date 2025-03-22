@@ -422,7 +422,7 @@ impl Downloader {
     ///
     /// Note that this does not start a download, but only provides new nodes to already queued
     /// downloads. Use [`Self::queue`] to queue a download.
-    pub async fn nodes_have(&mut self, hash: Hash, nodes: Vec<NodeId>) {
+    pub async fn nodes_have(&self, hash: Hash, nodes: Vec<NodeId>) {
         let msg = Message::NodesHave { hash, nodes };
         if let Err(send_err) = self.msg_tx.send(msg).await {
             let msg = send_err.0;
