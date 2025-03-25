@@ -63,9 +63,9 @@ pub mod client;
 pub mod proto;
 
 /// Chunk size for getting blobs over RPC
-const RPC_BLOB_GET_CHUNK_SIZE: usize = 1024 * 64;
+const RPC_BLOB_GET_CHUNK_SIZE: usize = 1024 * 1024;
 /// Channel cap for getting blobs over RPC
-const RPC_BLOB_GET_CHANNEL_CAP: usize = 2;
+const RPC_BLOB_GET_CHANNEL_CAP: usize = 16;
 
 impl<D: crate::store::Store> Blobs<D> {
     /// Get a client for the blobs protocol
