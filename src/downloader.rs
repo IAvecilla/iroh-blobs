@@ -70,7 +70,7 @@ mod test;
 use self::progress::{BroadcastProgressSender, ProgressSubscriber, ProgressTracker};
 
 /// Duration for which we keep nodes connected after they were last useful to us.
-const IDLE_PEER_TIMEOUT: Duration = Duration::from_secs(10);
+const IDLE_PEER_TIMEOUT: Duration = Duration::from_secs(120);
 /// Capacity of the channel used to communicate between the [`Downloader`] and the [`Service`].
 const SERVICE_CHANNEL_CAPACITY: usize = 128;
 
