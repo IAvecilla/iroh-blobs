@@ -52,7 +52,7 @@ use tokio::{
     task::JoinSet,
 };
 use tokio_util::{either::Either, sync::CancellationToken, time::delay_queue};
-use tracing::{debug, error, error_span, trace, warn, Instrument};
+use tracing::{debug, error, trace, trace_span, warn, Instrument};
 
 use crate::{
     get::{db::DownloadProgress, Stats},
@@ -365,7 +365,7 @@ impl Downloader {
 
             let service = Service::new(getter, dialer, concurrency_limits, retry_config, msg_rx);
 
-            service.run().instrument(error_span!("downloader", %me))
+            service.run().instrument(trace_span!("downloader", %me))
         };
         rt.spawn_detached(create_future);
         Self {
@@ -1189,7 +1189,7 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
 
             (kind, res)
         }
-        .instrument(error_span!("transfer", %kind, node=%node.fmt_short()));
+        .instrument(trace_span!("transfer", %kind, node=%node.fmt_short()));
         node_info.state = match &node_info.state {
             ConnectedState::Busy { active_requests } => ConnectedState::Busy {
                 active_requests: active_requests.saturating_add(1),
