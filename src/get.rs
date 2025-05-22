@@ -69,6 +69,7 @@ pub mod fsm {
     use iroh::endpoint::Connection;
     use iroh_io::{AsyncSliceWriter, AsyncStreamReader, TokioStreamReader};
     use tokio::io::AsyncWriteExt;
+    use tokio_util::time::FutureExt;
 
     use super::*;
     use crate::{
@@ -701,6 +702,8 @@ pub mod fsm {
             Ok((done, res))
         }
 
+        const BLOB_CONTENT_TIMEOUT: Duration = Duration::from_secs(5);
+
         /// Write the entire stream for this blob to a batch writer.
         pub async fn write_all_batch<B>(self, writer: B) -> result::Result<AtEndBlob, DecodeError>
         where
@@ -711,7 +714,15 @@ pub mod fsm {
             let mut content = self;
             let size = content.tree().size();
             loop {
-                match content.next().await {
+                match content
+                    .next()
+                    .timeout(Self::BLOB_CONTENT_TIMEOUT)
+                    .await
+                    .map_err(|_| {
+                        DecodeError::Read(endpoint::ReadError::ConnectionLost(
+                            endpoint::ConnectionError::TimedOut,
+                        ))
+                    })? {
                     BlobContentNext::More((next, item)) => {
                         let item = item?;
                         match &item {
