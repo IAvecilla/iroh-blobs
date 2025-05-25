@@ -17,6 +17,11 @@ impl From<GetError> for FailureAction {
             e @ GetError::NotFound(_) => FailureAction::AbortRequest(e.into()),
             e @ GetError::RemoteReset(_) => FailureAction::RetryLater(e.into()),
             e @ GetError::NoncompliantNode(_) => FailureAction::DropPeer(e.into()),
+            GetError::Io(err)
+                if err.to_string() == endpoint::ConnectionError::TimedOut.to_string() =>
+            {
+                FailureAction::AbortRequest(err.into())
+            }
             e @ GetError::Io(_) => FailureAction::RetryLater(e.into()),
             e @ GetError::BadRequest(_) => FailureAction::AbortRequest(e.into()),
             // TODO: what do we want to do on local failures?
