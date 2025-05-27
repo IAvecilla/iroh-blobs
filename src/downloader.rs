@@ -615,11 +615,13 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
                 Some(res) = self.in_progress_downloads.join_next(), if !self.in_progress_downloads.is_empty() => {
                     match res {
                         Ok((kind, result)) => {
+                            println!("COMPLETE DOWNLOAD OK: {result:?}");
                             trace!(%kind, "tick: transfer completed");
                             inc!(Metrics, downloader_tick_transfer_completed);
                             self.on_download_completed(kind, result);
                         }
                         Err(err) => {
+                            println!("COMPLETE DOWNLOAD FAIL");
                             warn!(?err, "transfer task panicked");
                             inc!(Metrics, downloader_tick_transfer_failed);
                         }
@@ -731,6 +733,7 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
                     Err(err) => {
                         // This prints a "FailureAction" which is somewhat weird, but that's all we get here.
                         tracing::error!(?err, "failed queuing new download");
+                        println!("ERROR QUEIEING");
                         self.finalize_download(
                             kind,
                             [(intent_id, intent_handlers)].into(),
@@ -741,6 +744,7 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
                         return;
                     }
                     Ok(GetOutput::Complete(stats)) => {
+                        println!("FINALIZING DOWNLOAD");
                         self.finalize_download(
                             kind,
                             [(intent_id, intent_handlers)].into(),
@@ -749,8 +753,10 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
                         return;
                     }
                     Ok(GetOutput::NeedsConn(state)) => {
+                        println!("NEEDS CON: {state:?}");
                         // early exit if no providers.
                         if self.providers.get_candidates(&kind.hash()).next().is_none() {
+                            println!("FINALIZING NO PEERS");
                             self.finalize_download(
                                 kind,
                                 [(intent_id, intent_handlers)].into(),
@@ -758,6 +764,7 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
                             );
                             return;
                         }
+                        println!("KEEP GOING");
                         state
                     }
                 };
@@ -905,9 +912,11 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
         };
 
         if finalize {
+            println!("FINALIZING");
             let result = result.map_err(|_| DownloadError::DownloadFailed);
             self.finalize_download(kind, request_info.intents, result);
         } else {
+            println!("RETRYING");
             // reinsert the download at the front of the queue to try from the next node
             self.requests.insert(kind, request_info);
             self.queue.insert_front(kind);
@@ -1165,7 +1174,10 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
         // we can only resume it once.
         let get_state = match request_info.get_state.take() {
             Some(state) => Either::Left(async move { Ok(GetOutput::NeedsConn(state)) }),
-            None => Either::Right(self.getter.get(kind, progress)),
+            None => {
+                let res = Either::Right(self.getter.get(kind, progress));
+                res
+            }
         };
         let fut = async move {
             // NOTE: it's an open question if we should do timeouts at this point. Considerations from @Frando:
@@ -1175,16 +1187,27 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
             // > time, while faster nodes could be readily available.
             // As a conclusion, timeouts should be added only after downloads are known to be bounded
             let fut = async move {
+                println!("WAIT FOR GET STATE");
                 match get_state.await? {
-                    GetOutput::Complete(stats) => Ok(stats),
-                    GetOutput::NeedsConn(state) => state.proceed(conn).await,
+                    GetOutput::Complete(stats) => {
+                        println!("COMPLETE");
+                        Ok(stats)
+                    }
+                    GetOutput::NeedsConn(state) => {
+                        println!("TRYING TO PROCEED");
+                        let a = state.proceed(conn).await;
+                        println!("RESULT MID: {a:?}");
+                        a
+                    }
                 }
             };
             tokio::pin!(fut);
+            println!("FUTURE FINISHED");
             let res = tokio::select! {
                 _ = cancellation.cancelled() => Err(FailureAction::AllIntentsDropped),
                 res = &mut fut => res
             };
+            println!("WE GOT THE RESULT: {res:?}");
             trace!("transfer finished");
 
             (kind, res)

@@ -1,6 +1,6 @@
 //! Functions that use the iroh-blobs protocol in conjunction with a bao store.
 
-use std::{future::Future, io, num::NonZeroU64, pin::Pin};
+use std::{future::Future, io, num::NonZeroU64, pin::Pin, time::Duration};
 
 use anyhow::anyhow;
 use bao_tree::{ChunkNum, ChunkRanges};
@@ -13,6 +13,7 @@ use iroh::endpoint::Connection;
 use iroh_io::AsyncSliceReader;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
+use tokio_util::time::FutureExt;
 use tracing::trace;
 
 use crate::{
@@ -54,6 +55,7 @@ pub async fn get_to_db<
     hash_and_format: &HashAndFormat,
     progress_sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> Result<Stats, GetError> {
+    println!("GET TO DB 1");
     match get_to_db_in_steps(db.clone(), *hash_and_format, progress_sender).await? {
         GetState::Complete(res) => Ok(res),
         GetState::NeedsConn(state) => {
@@ -86,11 +88,16 @@ pub async fn get_to_db_in_steps<
         let fut: GetFuture = Box::pin(fut);
         fut
     });
+    println!("GET GENERATOR");
     match gen.async_resume().await {
         GeneratorState::Yielded(Yield::NeedConn(reply)) => {
+            println!("WE GOT HERE 1: {reply:?}");
             Ok(GetState::NeedsConn(GetStateNeedsConn(gen, reply)))
         }
-        GeneratorState::Complete(res) => res.map(GetState::Complete),
+        GeneratorState::Complete(res) => {
+            println!("WE GOT HERE 2: {res:?}");
+            res.map(GetState::Complete)
+        }
     }
 }
 
@@ -131,8 +138,20 @@ struct GetCo(Co<Yield>);
 impl GetCo {
     async fn get_conn(&self) -> Connection {
         let (tx, rx) = oneshot::channel();
-        self.0.yield_(Yield::NeedConn(tx)).await;
-        rx.await.expect("sender may not be dropped")
+        println!("GET CONN INSIDE");
+        self.0
+            .yield_(Yield::NeedConn(tx))
+            .timeout(Duration::from_secs(5))
+            .await
+            .expect("DYING OF TIMEOUT");
+        println!("GET CONN 2");
+        let a = rx
+            .timeout(Duration::from_secs(5))
+            .await
+            .expect("A")
+            .expect("DYING OF TIMEOUT");
+        println!("GET CONN 3");
+        a
     }
 }
 
@@ -149,8 +168,16 @@ async fn producer<D: BaoStore>(
     let HashAndFormat { hash, format } = hash_and_format;
     let co = GetCo(co);
     match format {
-        BlobFormat::Raw => get_blob(db, co, hash, progress).await,
-        BlobFormat::HashSeq => get_hash_seq(db, co, hash, progress).await,
+        BlobFormat::Raw => {
+            println!("CALLING GET BLOB");
+            let result = get_blob(db, co, hash, progress).await;
+            println!("RESULT: {result:?}");
+            result
+        }
+        BlobFormat::HashSeq => {
+            println!("WHAT");
+            get_hash_seq(db, co, hash, progress).await
+        }
     }
 }
 
@@ -211,18 +238,42 @@ async fn get_blob<D: BaoStore>(
         }
         None => {
             // full request
-            let conn = co.get_conn().await;
+            println!("BEFORE GET CONN");
+            let conn = match co.get_conn().timeout(Duration::from_secs(5)).await {
+                Ok(conn) => {
+                    println!("Got connection");
+                    conn
+                }
+                Err(e) => {
+                    println!("Timeout or error getting connection: {:?}", e);
+                    return Err(GetError::Io(anyhow!("timed out")));
+                }
+            };
+            println!("AFTER GET CONN");
             let request = get::fsm::start(conn, GetRequest::single(*hash));
             // create a new bidi stream
-            let connected = request.next().await?;
+            let connected = request
+                .next()
+                .timeout(Duration::from_secs(5))
+                .await
+                .map_err(|e| GetError::Io(anyhow!("timed out")))??;
+            println!("AFTER REQUEST");
             // next step. we have requested a single hash, so this must be StartRoot
-            let ConnectedNext::StartRoot(start) = connected.next().await? else {
+            let ConnectedNext::StartRoot(start) = connected
+                .next()
+                .timeout(Duration::from_secs(5))
+                .await
+                .map_err(|e| GetError::Io(anyhow!("timed out")))??
+            else {
                 return Err(GetError::NoncompliantNode(anyhow!("expected StartRoot")));
             };
+            println!("AFTER CONNECTED");
             // move to the header
             let header = start.next();
             // do the ceremony of getting the blob and adding it to the database
-            get_blob_inner(db, header, progress).await?
+            let res = get_blob_inner(db, header, progress).await;
+            println!("RES IN BLOB INNER: {res:?}");
+            res?
         }
     };
 
@@ -267,7 +318,11 @@ async fn get_blob_inner<D: BaoStore>(
 ) -> Result<AtEndBlob, GetError> {
     // read the size. The size we get here is not verified, but since we use
     // it for the tree traversal we are guaranteed not to get more than size.
-    let (at_content, size) = at_header.next().await?;
+    let (at_content, size) = at_header
+        .next()
+        .timeout(Duration::from_secs(5))
+        .await
+        .map_err(|e| GetError::Io(anyhow!("Timeout")))??;
     let hash = at_content.hash();
     let child_offset = at_content.offset();
     // get or create the partial entry
@@ -297,7 +352,9 @@ async fn get_blob_inner<D: BaoStore>(
     };
     let mut bw = FallibleProgressBatchWriter::new(bw, on_write);
     // use the convenience method to write all to the batch writer
-    let end = at_content.write_all_batch(&mut bw).await?;
+    let end = at_content.write_all_batch(&mut bw).await;
+    println!("RESULT END: {end:?}");
+    let end = end?;
     // sync the underlying storage, if needed
     bw.sync().await?;
     drop(bw);
@@ -319,7 +376,11 @@ async fn get_blob_inner_partial<D: BaoStore>(
 ) -> Result<AtEndBlob, GetError> {
     // read the size. The size we get here is not verified, but since we use
     // it for the tree traversal we are guaranteed not to get more than size.
-    let (at_content, size) = at_header.next().await?;
+    let (at_content, size) = at_header
+        .next()
+        .timeout(Duration::from_secs(5))
+        .await
+        .map_err(|e| GetError::Io(anyhow!("Timeout")))??;
     // create a batch writer for the bao file
     let bw = entry.batch_writer().await?;
     // allocate a new id for progress reports for this transfer
@@ -347,7 +408,10 @@ async fn get_blob_inner_partial<D: BaoStore>(
     };
     let mut bw = FallibleProgressBatchWriter::new(bw, on_write);
     // use the convenience method to write all to the batch writer
-    let at_end = at_content.write_all_batch(&mut bw).await?;
+    println!("WRITE ALL BATCH CALLED 2");
+    let at_end = at_content.write_all_batch(&mut bw).await;
+    println!("RESULT end: {at_end:?}");
+    let at_end = at_end?;
     // sync the underlying storage, if needed
     bw.sync().await?;
     drop(bw);
@@ -459,7 +523,12 @@ async fn get_hash_seq<D: BaoStore>(
             let connected = request.next().await?;
             log!("connected");
             // we have not requested the root, so this must be StartChild
-            let ConnectedNext::StartChild(start) = connected.next().await? else {
+            let ConnectedNext::StartChild(start) = connected
+                .next()
+                .timeout(Duration::from_secs(5))
+                .await
+                .map_err(|e| GetError::Io(anyhow!("timed out")))??
+            else {
                 return Err(GetError::NoncompliantNode(anyhow!("expected StartChild")));
             };
             let mut next = EndBlobNext::MoreChildren(start);
@@ -482,6 +551,7 @@ async fn get_hash_seq<D: BaoStore>(
                     info.missing_ranges()
                 );
                 let header = start.next(child_hash);
+                println!("GET BLOB INNER 2");
                 let end_blob = match info {
                     BlobInfo::Missing => get_blob_inner(db, header, sender.clone()).await?,
                     BlobInfo::Partial { entry, .. } => {
@@ -510,6 +580,7 @@ async fn get_hash_seq<D: BaoStore>(
             // move to the header
             let header = start.next();
             // read the blob and add it to the database
+            println!("GET BLOB INNER 3");
             let end_root = get_blob_inner(db, header, sender.clone()).await?;
             // read the collection fully for now
             let entry = db
@@ -545,6 +616,7 @@ async fn get_hash_seq<D: BaoStore>(
                     None => break start.finish(),
                 };
                 let header = start.next(child_hash);
+                println!("GET BLOB INNER 4");
                 let end_blob = get_blob_inner(db, header, sender.clone()).await?;
                 next = end_blob.next();
             }

@@ -2,6 +2,7 @@
 //!
 //! [`Connection`]: iroh::endpoint::Connection
 
+use anyhow::anyhow;
 use futures_lite::FutureExt;
 use iroh::endpoint;
 
@@ -48,12 +49,18 @@ impl<S: Store> Getter for IoGetter<S> {
     ) -> GetStartFut<Self::NeedsConn> {
         let store = self.store.clone();
         async move {
+            println!("GET TO DB 2");
             match get_to_db_in_steps(store, kind.hash_and_format(), progress_sender).await {
-                Err(err) => Err(err.into()),
+                Err(err) => {
+                    println!("ERROR OUTPUT: {}", err);
+                    Err(err.into())
+                }
                 Ok(crate::get::db::GetState::Complete(stats)) => {
+                    println!("COMPLETE OUTPUT");
                     Ok(super::GetOutput::Complete(stats))
                 }
                 Ok(crate::get::db::GetState::NeedsConn(needs_conn)) => {
+                    println!("COMPLETE OUTPUT 2");
                     Ok(super::GetOutput::NeedsConn(needs_conn))
                 }
             }
@@ -65,12 +72,20 @@ impl<S: Store> Getter for IoGetter<S> {
 impl super::NeedsConn<endpoint::Connection> for crate::get::db::GetStateNeedsConn {
     fn proceed(self, conn: endpoint::Connection) -> super::GetProceedFut {
         async move {
+            println!("PROCEED IN CON");
             let res = self.proceed(conn).await;
+            println!("PROCEED RESOLVED");
             #[cfg(feature = "metrics")]
             track_metrics(&res);
             match res {
                 Ok(stats) => Ok(stats),
-                Err(err) => Err(err.into()),
+                Err(err) => {
+                    let og = err;
+                    println!("{og:?}");
+                    let new = og.into();
+                    println!("{new:?}");
+                    Err(new)
+                }
             }
         }
         .boxed_local()

@@ -135,6 +135,7 @@ impl ProgressSender for BroadcastProgressSender {
         // making sure that the lock is not held across an await point.
         let futs = {
             let mut inner = self.shared.lock();
+            println!("Progress Sending");
             inner.on_progress(msg.clone());
             let futs = inner
                 .subscribers
@@ -168,6 +169,7 @@ impl ProgressSender for BroadcastProgressSender {
 
     fn try_send(&self, msg: Self::Msg) -> Result<(), ProgressSendError> {
         let mut inner = self.shared.lock();
+        println!("Progress Sending");
         inner.on_progress(msg.clone());
         // remove senders where the receiver is dropped
         inner
@@ -181,6 +183,7 @@ impl ProgressSender for BroadcastProgressSender {
 
     fn blocking_send(&self, msg: Self::Msg) -> Result<(), ProgressSendError> {
         let mut inner = self.shared.lock();
+        println!("Progress Sending");
         inner.on_progress(msg.clone());
         // remove senders where the receiver is dropped
         inner

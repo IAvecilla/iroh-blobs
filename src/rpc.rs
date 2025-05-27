@@ -434,6 +434,7 @@ impl<D: crate::store::Store> Handler<D> {
     }
 
     fn blob_download(self, msg: BlobDownloadRequest) -> impl Stream<Item = DownloadResponse> {
+        println!("BLOB DOWNLOAD REQUESTED");
         let (sender, receiver) = async_channel::bounded(1024);
         let endpoint = self.endpoint().clone();
         let progress = AsyncChannelProgressSender::new(sender);
@@ -445,6 +446,7 @@ impl<D: crate::store::Store> Handler<D> {
                 .download(endpoint, msg, progress.clone())
                 .await
             {
+                println!("SENDING ABORT");
                 progress
                     .send(DownloadProgress::Abort(RpcError::new(&*err)))
                     .await
@@ -950,6 +952,7 @@ impl<D: crate::store::Store> Handler<D> {
         let temp_tag = self.store().temp_tag(hash_and_format);
         let stats = match mode {
             DownloadMode::Queued => {
+                println!("QUEUED DOWNLOAD");
                 self.download_queued(endpoint, hash_and_format, nodes, progress.clone())
                     .await?
             }
@@ -1012,6 +1015,7 @@ impl<D: crate::store::Store> Handler<D> {
         let mut remaining_nodes = nodes.len();
         let mut nodes_iter = nodes.into_iter();
         'outer: loop {
+            println!("GET TO DB 3");
             match crate::get::db::get_to_db_in_steps(
                 self.store().clone(),
                 hash_and_format,

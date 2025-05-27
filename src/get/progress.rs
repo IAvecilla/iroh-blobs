@@ -179,7 +179,9 @@ impl TransferState {
                     warn!(%id, "Received `Done` event for unknown progress id.")
                 }
             }
-            DownloadProgress::AllDone(_) | DownloadProgress::Abort(_) => {}
+            DownloadProgress::AllDone(_) | DownloadProgress::Abort(_) => {
+                println!("WE'RE ABORTING BUT WE ARE HERE");
+            }
         }
     }
 }

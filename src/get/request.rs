@@ -1,10 +1,11 @@
 //! Utilities for complex get requests.
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use bao_tree::{ChunkNum, ChunkRanges};
 use bytes::Bytes;
 use iroh::endpoint::Connection;
 use rand::Rng;
+use tokio_util::time::FutureExt;
 
 use super::{fsm, Stats};
 use crate::{
@@ -26,8 +27,10 @@ pub async fn get_unverified_size(
         RangeSpecSeq::from_ranges(vec![ChunkRanges::from(ChunkNum(u64::MAX)..)]),
     );
     let request = fsm::start(connection.clone(), request);
-    let connected = request.next().await?;
-    let fsm::ConnectedNext::StartRoot(start) = connected.next().await? else {
+    let connected = request.next().timeout(Duration::from_secs(5)).await??;
+    let fsm::ConnectedNext::StartRoot(start) =
+        connected.next().timeout(Duration::from_secs(5)).await??
+    else {
         unreachable!("expected start root");
     };
     let at_blob_header = start.next();
@@ -50,8 +53,10 @@ pub async fn get_verified_size(
         RangeSpecSeq::from_ranges(vec![ChunkRanges::from(ChunkNum(u64::MAX)..)]),
     );
     let request = fsm::start(connection.clone(), request);
-    let connected = request.next().await?;
-    let fsm::ConnectedNext::StartRoot(start) = connected.next().await? else {
+    let connected = request.next().timeout(Duration::from_secs(5)).await??;
+    let fsm::ConnectedNext::StartRoot(start) =
+        connected.next().timeout(Duration::from_secs(5)).await??
+    else {
         unreachable!("expected start root");
     };
     let header = start.next();
@@ -119,7 +124,7 @@ pub async fn get_hash_seq_and_sizes(
                     None => break more.finish(),
                 };
                 let at_header = more.next(hash);
-                let (at_content, size) = at_header.next().await?;
+                let (at_content, size) = at_header.next().timeout(Duration::from_secs(5)).await??;
                 let next = at_content.drain().await?;
                 sizes.push(size);
                 curr = next;
@@ -148,8 +153,10 @@ pub async fn get_chunk_probe(
     let ranges = RangeSpecSeq::from_ranges([ranges]);
     let request = GetRequest::new(*hash, ranges);
     let request = fsm::start(connection.clone(), request);
-    let connected = request.next().await?;
-    let fsm::ConnectedNext::StartRoot(start) = connected.next().await? else {
+    let connected = request.next().timeout(Duration::from_secs(5)).await??;
+    let fsm::ConnectedNext::StartRoot(start) =
+        connected.next().timeout(Duration::from_secs(5)).await??
+    else {
         unreachable!("query includes root");
     };
     let header = start.next();

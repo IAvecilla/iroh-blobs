@@ -500,7 +500,10 @@ pub mod fsm {
             B: BaoBatchWriter,
         {
             let (content, _size) = self.next().await?;
-            let res = content.write_all_batch(batch).await?;
+            println!("WRITE ALL BATCH CALLED 3");
+            let res = content.write_all_batch(batch).await;
+            println!("RESULT end: {res:?}");
+            let res = res?;
             Ok(res)
         }
 

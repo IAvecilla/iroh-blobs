@@ -57,6 +57,7 @@ pub(super) struct GetStateNeedsConn(TestingGetter, DownloadKind, BroadcastProgre
 
 impl downloader::NeedsConn<NodeId> for GetStateNeedsConn {
     fn proceed(self, peer: NodeId) -> super::GetProceedFut {
+        println!("PROCEED IN CON 2");
         let GetStateNeedsConn(getter, kind, progress_sender) = self;
         let mut inner = getter.0.write();
         inner.request_history.push((kind, peer));
