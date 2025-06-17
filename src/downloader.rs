@@ -55,7 +55,7 @@ use tokio_util::{
     sync::CancellationToken,
     time::{delay_queue, FutureExt},
 };
-use tracing::{debug, error, error_span, trace, warn, Instrument};
+use tracing::{debug, error, error_span, trace, trace_span, warn, Instrument};
 
 use crate::{
     get::{db::DownloadProgress, error::GetError, Stats},
@@ -1221,7 +1221,7 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
 
             (kind, res)
         }
-        .instrument(error_span!("transfer", %kind, node=%node.fmt_short()));
+        .instrument(trace_span!("transfer", %kind, node=%node.fmt_short()));
         node_info.state = match &node_info.state {
             ConnectedState::Busy { active_requests } => ConnectedState::Busy {
                 active_requests: active_requests.saturating_add(1),
