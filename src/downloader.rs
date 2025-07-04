@@ -56,7 +56,7 @@ use tokio_util::{
     sync::CancellationToken,
     time::{delay_queue, FutureExt},
 };
-use tracing::{debug, error, error_span, trace, trace_span, warn, Instrument};
+use tracing::{debug, error, info, error_span, trace, trace_span, warn, Instrument};
 
 use crate::{
     get::{db::DownloadProgress, error::GetError, Stats},
