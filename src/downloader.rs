@@ -1473,7 +1473,7 @@ impl ProviderMap {
                 }
             }
         } else {
-            warn!("IROH DEBUG PROVIDER_MAP: Attempted to remove hash {} but it wasn't found", hash));
+            warn!("IROH DEBUG PROVIDER_MAP: Attempted to remove hash {} but it wasn't found", hash);
         }
     }
 
