@@ -275,7 +275,7 @@ impl DownloadKind {
 
 impl fmt::Display for DownloadKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{:?}", self.0.hash.fmt_short(), self.0.format)
+        write!(f, "{}:{:?}", self.0.hash, self.0.format)
     }
 }
 
@@ -373,7 +373,7 @@ impl Downloader {
     {
         let metrics = Arc::new(Metrics::default());
         let metrics2 = metrics.clone();
-        let me = endpoint.node_id().fmt_short();
+        let me = endpoint.node_id();
         let (msg_tx, msg_rx) = mpsc::channel(SERVICE_CHANNEL_CAPACITY);
         let dialer = Dialer::new(endpoint);
         let config = Arc::new(config);
@@ -634,7 +634,7 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
             self.metrics.downloader_tick_main.inc();
             tokio::select! {
                 Some((node, conn_result)) = self.dialer.next() => {
-                    trace!(node=%node.fmt_short(), "tick: connection ready");
+                    trace!(node=%node, "tick: connection ready");
                     self.metrics.downloader_tick_connection_ready.inc();
                     self.on_connection_ready(node, conn_result);
                 }
@@ -662,13 +662,13 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
                 }
                 Some(expired) = self.retry_nodes_queue.next() => {
                     let node = expired.into_inner();
-                    trace!(node=%node.fmt_short(), "tick: retry node");
+                    trace!(node=%node, "tick: retry node");
                     self.metrics.downloader_tick_retry_node.inc();
                     self.on_retry_wait_elapsed(node);
                 }
                 Some(expired) = self.goodbye_nodes_queue.next() => {
                     let node = expired.into_inner();
-                    trace!(node=%node.fmt_short(), "tick: goodbye node");
+                    trace!(node=%node, "tick: goodbye node");
                     self.metrics.downloader_tick_goodbye_node.inc();
                     self.disconnect_idle_node(node, "idle expired");
                 }
@@ -721,7 +721,7 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
             nodes,
             progress,
         } = request;
-        debug!(%kind, nodes=?nodes.iter().map(|n| n.node_id.fmt_short()).collect::<Vec<_>>(), "queue intent");
+        debug!(%kind, nodes=?nodes.iter().map(|n| n.node_id).collect::<Vec<_>>(), "queue intent");
 
         // store the download intent
         let intent_handlers = IntentHandlers {
@@ -863,13 +863,13 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
         );
         match result {
             Ok(connection) => {
-                trace!(node=%node.fmt_short(), "connected to node");
+                trace!(node=%node, "connected to node");
                 let drop_key = self.goodbye_nodes_queue.insert(node, IDLE_PEER_TIMEOUT);
                 self.connected_nodes
                     .insert(node, ConnectionInfo::new_idle(connection, drop_key));
             }
             Err(err) => {
-                debug!(%node, %err, "connection to node failed");
+                error!(%node, %err, "IROH DEBUG connection to node failed");
                 self.disconnect_and_retry(node);
             }
         }
@@ -905,36 +905,36 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
 
         match &result {
             Ok(_) => {
-                debug!(%kind, node=%node.fmt_short(), "download successful");
+                debug!(%kind, node=%node, "download successful");
                 // clear retry state if operation was successful
                 self.retry_node_state.remove(&node);
             }
             Err(FailureAction::AllIntentsDropped) => {
-                debug!(%kind, node=%node.fmt_short(), "download cancelled");
+                error!(%kind, node=%node, "IROH DEBUG download cancelled");
             }
             Err(FailureAction::AbortRequest(reason)) => {
-                debug!(%kind, node=%node.fmt_short(), %reason, "download failed: abort request");
-                error!("IROH DEBUG DOWNLOADER: Download FAILED (AbortRequest) for hash {} from node {} - reason: {}", 
-                       kind.hash().fmt_short(), node.fmt_short(), reason);
+                debug!(%kind, node=%node, %reason, "download failed: abort request");
+                error!("IROH DEBUG DOWNLOADER: Download FAILED (AbortRequest) for hash {} from node {} - reason: {}",
+                       kind.hash(), node, reason);
                 // do not try to download the hash from this node again
                 self.providers.remove_hash_from_node(&kind.hash(), &node);
             }
             Err(FailureAction::DropPeer(reason)) => {
-                debug!(%kind, node=%node.fmt_short(), %reason, "download failed: drop node");
-                error!("IROH DEBUG DOWNLOADER: Download FAILED (DropPeer) for hash {} from node {} - reason: {}", 
-                       kind.hash().fmt_short(), node.fmt_short(), reason);
+                debug!(%kind, node=%node, %reason, "download failed: drop node");
+                error!("IROH DEBUG DOWNLOADER: Download FAILED (DropPeer) for hash {} from node {} - reason: {}",
+                       kind.hash(), node, reason);
                 if node_info.is_idle() {
                     // remove the node
-                    error!("IROH DEBUG DOWNLOADER: Node {} is idle, removing node entirely", node.fmt_short());
+                    error!("IROH DEBUG DOWNLOADER: Node {} is idle, removing node entirely", node);
                     self.remove_node(node, "explicit drop");
                 } else {
                     // do not try to download the hash from this node again
-                    error!("IROH DEBUG DOWNLOADER: Node {} not idle, just removing hash {} from this node", node.fmt_short(), kind.hash().fmt_short());
+                    error!("IROH DEBUG DOWNLOADER: Node {} not idle, just removing hash {} from this node", node, kind.hash());
                     self.providers.remove_hash_from_node(&kind.hash(), &node);
                 }
             }
             Err(FailureAction::RetryLater(reason)) => {
-                debug!(%kind, node=%node.fmt_short(), %reason, "download failed: retry later");
+                error!(%kind, node=%node, %reason, "IROH DEBUG download failed: retry later");
                 if node_info.is_idle() {
                     self.disconnect_and_retry(node);
                 }
@@ -983,7 +983,7 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
             return;
         };
         let Some(state) = self.retry_node_state.get_mut(&node) else {
-            warn!(node=%node.fmt_short(), "missing retry state for node ready for retry");
+            warn!(node=%node, "IROH DEBUG missing retry state for node ready for retry");
             return;
         };
         state.retry_is_queued = false;
@@ -1022,17 +1022,17 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
                 NextStep::Wait => break,
                 NextStep::StartTransfer(node) => {
                     let _ = self.queue.pop_front();
-                    debug!(%kind, node=%node.fmt_short(), "start transfer");
+                    debug!(%kind, node=%node, "start transfer");
                     self.start_download(kind, node);
                 }
                 NextStep::Dial(node) => {
-                    debug!(%kind, node=%node.fmt_short(), "dial node");
+                    debug!(%kind, node=%node, "dial node");
                     self.dialer.queue_dial(node);
                 }
                 NextStep::DialQueuedDisconnect(node, key) => {
                     let idle_node = self.goodbye_nodes_queue.remove(&key).into_inner();
                     self.disconnect_idle_node(idle_node, "drop idle for new dial");
-                    debug!(%kind, node=%node.fmt_short(), idle_node=%idle_node.fmt_short(), "dial node, disconnect idle node)");
+                    debug!(%kind, node=%node, idle_node=%idle_node, "dial node, disconnect idle node)");
                     self.dialer.queue_dial(node);
                 }
                 NextStep::Park => {
@@ -1054,9 +1054,10 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
         self.disconnect_idle_node(node, "queue retry");
         let retry_state = self.retry_node_state.entry(node).or_default();
         retry_state.retry_count += 1;
+        info!("IROH DEBUG current retry count: {} , max_retries_per_node: {}", retry_state.retry_count, self.retry_config.max_retries_per_node);
         if retry_state.retry_count <= self.retry_config.max_retries_per_node {
             // node can be retried
-            debug!(node=%node.fmt_short(), retry_count=retry_state.retry_count, "queue retry");
+            debug!(node=%node, retry_count=retry_state.retry_count, "queue retry");
             let timeout = self.retry_config.initial_retry_delay * retry_state.retry_count;
             self.retry_nodes_queue.insert(node, timeout);
             retry_state.retry_is_queued = true;
@@ -1272,7 +1273,7 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
 
             (kind, res)
         }
-        .instrument(trace_span!("transfer", %kind, node=%node.fmt_short()));
+        .instrument(trace_span!("transfer", %kind, node=%node));
         node_info.state = match &node_info.state {
             ConnectedState::Busy { active_requests } => ConnectedState::Busy {
                 active_requests: active_requests.saturating_add(1),
@@ -1307,14 +1308,14 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
     }
 
     fn remove_node(&mut self, node: NodeId, reason: &'static str) {
-        debug!(node = %node.fmt_short(), %reason, "remove node");
-        error!("IROH DEBUG DOWNLOADER: REMOVING node {} due to: {}", node.fmt_short(), reason);
+        debug!(node = %node, %reason, "remove node");
+        error!("IROH DEBUG DOWNLOADER: REMOVING node {} due to: {}", node, reason);
         if self.disconnect_idle_node(node, reason) {
-            error!("IROH DEBUG DOWNLOADER: Node {} disconnected, removing from ProviderMap", node.fmt_short());
+            error!("IROH DEBUG DOWNLOADER: Node {} disconnected, removing from ProviderMap", node);
             self.providers.remove_node(&node);
             self.retry_node_state.remove(&node);
         } else {
-            error!("IROH DEBUG DOWNLOADER: Node {} was not disconnected (may not have been connected)", node.fmt_short());
+            error!("IROH DEBUG DOWNLOADER: Node {} was not disconnected (may not have been connected)", node);
         }
     }
 
@@ -1348,10 +1349,10 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
     /// hash at all, even with the other [`BlobFormat`].
     fn remove_hash_if_not_queued(&mut self, hash: &Hash) {
         if !self.queue.contains_hash(*hash) {
-            error!("IROH DEBUG DOWNLOADER: Hash {} not in queue, removing from ProviderMap", hash.fmt_short());
+            error!("IROH DEBUG DOWNLOADER: Hash {} not in queue, removing from ProviderMap", hash);
             self.providers.remove_hash(hash);
         } else {
-            error!("IROH DEBUG DOWNLOADER: Hash {} still in queue, NOT removing from ProviderMap", hash.fmt_short());
+            error!("IROH DEBUG DOWNLOADER: Hash {} still in queue, NOT removing from ProviderMap", hash);
         }
     }
 
@@ -1419,19 +1420,19 @@ impl ProviderMap {
         let mut updated = false;
         let hash_entry = self.hash_node.entry(hash).or_default();
         let nodes_vec: Vec<NodeId> = nodes.collect();
-        error!("IROH DEBUG PROVIDER_MAP: Adding nodes {:?} for hash {}", nodes_vec, hash.fmt_short());
+        error!("IROH DEBUG PROVIDER_MAP: Adding nodes {:?} for hash {}", nodes_vec, hash);
         for node in nodes_vec {
             let was_new = hash_entry.insert(node);
             updated |= was_new;
             let node_entry = self.node_hash.entry(node).or_default();
             node_entry.insert(hash);
             if was_new {
-                error!("IROH DEBUG PROVIDER_MAP: Added NEW provider {} for hash {}", node.fmt_short(), hash.fmt_short());
+                error!("IROH DEBUG PROVIDER_MAP: Added NEW provider {} for hash {}", node, hash);
             } else {
-                warn!("IROH DEBUG PROVIDER_MAP: Provider {} already existed for hash {}", node.fmt_short(), hash.fmt_short());
+                warn!("IROH DEBUG PROVIDER_MAP: Provider {} already existed for hash {}", node, hash);
             }
         }
-        error!("IROH DEBUG PROVIDER_MAP: After add, hash {} has {} providers total", hash.fmt_short(), hash_entry.len());
+        error!("IROH DEBUG PROVIDER_MAP: After add, hash {} has {} providers total", hash, hash_entry.len());
         updated
     }
 
@@ -1457,75 +1458,75 @@ impl ProviderMap {
     /// Signal the registry that this hash is no longer of interest.
     fn remove_hash(&mut self, hash: &Hash) {
         if let Some(nodes) = self.hash_node.remove(hash) {
-            error!("IROH DEBUG PROVIDER_MAP: REMOVING hash {} - had {} providers: {:?}", 
-                   hash.fmt_short(), nodes.len(), 
-                   nodes.iter().map(|n| n.fmt_short()).collect::<Vec<_>>());
+            error!("IROH DEBUG PROVIDER_MAP: REMOVING hash {} - had {} providers: {:?}",
+                   hash, nodes.len(),
+                   nodes.iter().map(|n| n).collect::<Vec<_>>());
             for node in nodes {
                 if let Some(hashes) = self.node_hash.get_mut(&node) {
                     hashes.remove(hash);
-                    error!("IROH DEBUG PROVIDER_MAP: Removed hash {} from node {} (node now has {} hashes)", 
-                           hash.fmt_short(), node.fmt_short(), hashes.len());
+                    error!("IROH DEBUG PROVIDER_MAP: Removed hash {} from node {} (node now has {} hashes)",
+                           hash, node, hashes.len());
                     if hashes.is_empty() {
                         self.node_hash.remove(&node);
-                        error!("IROH DEBUG PROVIDER_MAP: Removed node {} completely (had no more hashes)", node.fmt_short());
+                        error!("IROH DEBUG PROVIDER_MAP: Removed node {} completely (had no more hashes)", node);
                     }
                 }
             }
         } else {
-            warn!("IROH DEBUG PROVIDER_MAP: Attempted to remove hash {} but it wasn't found", hash.fmt_short());
+            warn!("IROH DEBUG PROVIDER_MAP: Attempted to remove hash {} but it wasn't found", hash));
         }
     }
 
     fn remove_node(&mut self, node: &NodeId) {
         if let Some(hashes) = self.node_hash.remove(node) {
-            error!("IROH DEBUG PROVIDER_MAP: REMOVING node {} - had {} hashes: {:?}", 
-                   node.fmt_short(), hashes.len(),
-                   hashes.iter().map(|h| h.fmt_short()).collect::<Vec<_>>());
+            error!("IROH DEBUG PROVIDER_MAP: REMOVING node {} - had {} hashes: {:?}",
+                   node, hashes.len(),
+                   hashes.iter().map(|h| h).collect::<Vec<_>>());
             for hash in hashes {
                 if let Some(nodes) = self.hash_node.get_mut(&hash) {
                     nodes.remove(node);
-                    error!("IROH DEBUG PROVIDER_MAP: Removed node {} from hash {} (hash now has {} providers)", 
-                           node.fmt_short(), hash.fmt_short(), nodes.len());
+                    error!("IROH DEBUG PROVIDER_MAP: Removed node {} from hash {} (hash now has {} providers)",
+                           node, hash, nodes.len());
                     if nodes.is_empty() {
                         self.hash_node.remove(&hash);
-                        error!("IROH DEBUG PROVIDER_MAP: Removed hash {} completely (had no more providers)", hash.fmt_short());
+                        error!("IROH DEBUG PROVIDER_MAP: Removed hash {} completely (had no more providers)", hash);
                     }
                 }
             }
         } else {
-            warn!("IROH DEBUG PROVIDER_MAP: Attempted to remove node {} but it wasn't found", node.fmt_short());
+            warn!("IROH DEBUG PROVIDER_MAP: Attempted to remove node {} but it wasn't found", node);
         }
     }
 
     fn remove_hash_from_node(&mut self, hash: &Hash, node: &NodeId) {
-        error!("IROH DEBUG PROVIDER_MAP: REMOVING hash {} from node {}", hash.fmt_short(), node.fmt_short());
-        
+        error!("IROH DEBUG PROVIDER_MAP: REMOVING hash {} from node {}", hash, node);
+
         let mut hash_now_empty = false;
         if let Some(nodes) = self.hash_node.get_mut(hash) {
             let was_present = nodes.remove(node);
-            error!("IROH DEBUG PROVIDER_MAP: Removed node {} from hash {} (was_present: {}, hash now has {} providers)", 
-                   node.fmt_short(), hash.fmt_short(), was_present, nodes.len());
+            error!("IROH DEBUG PROVIDER_MAP: Removed node {} from hash {} (was_present: {}, hash now has {} providers)",
+                   node, hash, was_present, nodes.len());
             if nodes.is_empty() {
-                error!("IROH DEBUG PROVIDER_MAP: Hash {} now has no providers, will remove hash completely", hash.fmt_short());
+                error!("IROH DEBUG PROVIDER_MAP: Hash {} now has no providers, will remove hash completely", hash);
                 hash_now_empty = true;
             }
         } else {
-            warn!("IROH DEBUG PROVIDER_MAP: Hash {} not found when trying to remove node {}", hash.fmt_short(), node.fmt_short());
+            warn!("IROH DEBUG PROVIDER_MAP: Hash {} not found when trying to remove node {}", hash, node);
         }
-        
+
         let mut node_now_empty = false;
         if let Some(hashes) = self.node_hash.get_mut(node) {
             let was_present = hashes.remove(hash);
-            error!("IROH DEBUG PROVIDER_MAP: Removed hash {} from node {} (was_present: {}, node now has {} hashes)", 
-                   hash.fmt_short(), node.fmt_short(), was_present, hashes.len());
+            error!("IROH DEBUG PROVIDER_MAP: Removed hash {} from node {} (was_present: {}, node now has {} hashes)",
+                   hash, node, was_present, hashes.len());
             if hashes.is_empty() {
-                error!("IROH DEBUG PROVIDER_MAP: Node {} now has no hashes, will remove node completely", node.fmt_short());
+                error!("IROH DEBUG PROVIDER_MAP: Node {} now has no hashes, will remove node completely", node);
                 node_now_empty = true;
             }
         } else {
-            warn!("IROH DEBUG PROVIDER_MAP: Node {} not found when trying to remove hash {}", node.fmt_short(), hash.fmt_short());
+            warn!("IROH DEBUG PROVIDER_MAP: Node {} not found when trying to remove hash {}", node, hash);
         }
-        
+
         // Handle cascading removals
         if hash_now_empty {
             self.remove_hash(hash);
