@@ -46,6 +46,7 @@ use anyhow::anyhow;
 use futures_lite::{future::BoxedLocal, Stream, StreamExt};
 use hashlink::LinkedHashSet;
 use iroh::{endpoint::{self}, Endpoint, NodeAddr, NodeId};
+use rand::Rng;
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
@@ -734,6 +735,7 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
             .iter()
             .map(|n| n.node_id)
             .filter(|node_id| *node_id != self.dialer.node_id());
+        println!("NODE IDS TO REQUEST: {:?}", node_ids);
         let updated = self.providers.add_hash_with_nodes(kind.hash(), node_ids);
 
         // queue the transfer (if not running) or attach to transfer progress (if already running)
@@ -783,8 +785,11 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
                         return;
                     }
                     Ok(GetOutput::NeedsConn(state)) => {
-                        // early exit if no providers.
-                        if self.providers.get_candidates(&kind.hash()).next().is_none() {
+                        // early exit if no candidates.
+                        let candidates: Vec<NodeId> = self.providers.get_candidates(&kind.hash()).collect();
+                        println!("CANDIDATES IN NEEDS CON: {:?}", candidates);
+                        if candidates.is_empty() {
+                            println!("NO CANDIDATES IN NEEDS CON");
                             self.finalize_download(
                                 kind,
                                 [(intent_id, intent_handlers)].into(),
@@ -1065,16 +1070,20 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
     fn next_step(&self, kind: &DownloadKind) -> NextStep {
         // If the total requests capacity is reached, we have to wait until an active request
         // completes.
+        println!("CHECKING NEXT STEP FOR KIND: {}", kind.0.hash);
         if self
             .concurrency_limits
             .at_requests_capacity(self.active_requests.len())
         {
+            println!("CONCURRENCY LIMITS REACHED");
             return NextStep::Wait;
         };
 
-        let mut candidates = self.providers.get_candidates(&kind.hash()).peekable();
+        let candidates: Vec<NodeId> = self.providers.get_candidates(&kind.hash()).collect();
+        println!("CANDIDATES NEXT STEP: {candidates:?}");
         // If we have no provider candidates for this download, there's nothing else we can do.
-        if candidates.peek().is_none() {
+        if candidates.is_empty() {
+            println!("OUT OF PROVIDERS IN NEXT STEP");
             return NextStep::OutOfProviders;
         }
 
@@ -1104,6 +1113,7 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
                         .concurrency_limits
                         .node_at_request_capacity(active_requests)
                     {
+                        println!("EXHAUSTED PROVIDER, WE SHOULD GO TO WAIT");
                         has_exhausted_provider = true;
                     } else {
                         // if there is a node in our best connected list
@@ -1191,6 +1201,7 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
         // If we have pending dials to candidates, or connected candidates which are busy
         // with other work: Wait for one of these to become available.
         else if has_exhausted_provider || has_dialing {
+            println!("WAITING FOR PROVIDER");
             NextStep::Wait
         }
         // All providers are in the retry queue: Park this request until they can be tried again.
@@ -1199,6 +1210,7 @@ impl<G: Getter<Connection = D::Connection>, D: DialerT> Service<G, D> {
         }
         // We have no candidates left: Nothing more to do.
         else {
+            println!("IMPOSSIBLE, OUT OF PROVIDERS");
             NextStep::OutOfProviders
         }
     }
