@@ -51,7 +51,8 @@ pub(super) async fn gc_mark_task(
     let mut tags = store.tags().list().await?;
     while let Some(tag) = tags.next().await {
         let info = tag?;
-        trace!("adding root {:?} {:?}", info.name, info.hash_and_format());
+        // info!("adding root {:?} {:?}", info.name, info.hash_and_format());
+        info!("ADDING TAG TO LIVE {:?}", info);
         roots.insert(info.hash_and_format());
     }
     trace!("traversing temp roots");
@@ -76,7 +77,7 @@ pub(super) async fn gc_mark_task(
             }
         }
     }
-    trace!("gc mark done. found {} live blobs", live.len());
+    info!("gc mark done. found {} live blobs", live.len());
     Ok(())
 }
 
@@ -88,9 +89,11 @@ async fn gc_sweep_task(
     let mut blobs = store.blobs().list().stream().await?;
     let mut count = 0;
     let mut batch = Vec::new();
+    info!("SWEEP TASK");
     while let Some(hash) = blobs.next().await {
         let hash = hash?;
         if !live.contains(&hash) {
+            info!("LIVE DOES NOT CONTAIN BLOB {:?} eliminating", hash);
             batch.push(hash);
             count += 1;
         }
