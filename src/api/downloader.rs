@@ -433,6 +433,7 @@ async fn execute_get(
     let remote = store.remote();
     let mut providers = providers.find_providers(request.content());
     while let Some(provider) = providers.next().await {
+        println!("Trying provider {}", provider);
         progress
             .send(DownloadProgressItem::TryProvider {
                 id: provider,
@@ -452,6 +453,7 @@ async fn execute_get(
                     request: request.clone(),
                 })
                 .await?;
+            println!("Provider {} failed", provider);
             continue;
         };
         match remote
@@ -468,6 +470,7 @@ async fn execute_get(
                         request: request.clone(),
                     })
                     .await?;
+                println!("Provider {} succeeded", provider);
                 return Ok(());
             }
             Err(_cause) => {
@@ -477,6 +480,7 @@ async fn execute_get(
                         request: request.clone(),
                     })
                     .await?;
+                println!("Provider {} failed during download", provider);
                 continue;
             }
         }
