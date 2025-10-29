@@ -473,14 +473,14 @@ async fn execute_get(
                 println!("Provider {} succeeded", provider);
                 return Ok(());
             }
-            Err(_cause) => {
+            Err(cause) => {
                 progress
                     .send(DownloadProgressItem::ProviderFailed {
                         id: provider,
                         request: request.clone(),
                     })
                     .await?;
-                println!("Provider {} failed during download", provider);
+                println!("Provider {} failed during download {}", provider, cause);
                 continue;
             }
         }
